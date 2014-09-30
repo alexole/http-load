@@ -1,6 +1,6 @@
 /* http_load - multiprocessing http test client
 **
-** Copyright © 1998,1999,2001 by Jef Poskanzer <jef@mail.acme.com>.
+** Copyright Â© 1998,1999,2001 by Jef Poskanzer <jef@mail.acme.com>.
 ** All rights reserved.
 **
 ** Redistribution and use in source and binary forms, with or without
@@ -70,6 +70,7 @@
 /* How many file descriptors to not use. */
 #define RESERVED_FDS 3
 
+typedef enum { METHOD_GET, METHOD_POST } method_t;
 
 typedef struct {
     char* url_str;
@@ -87,6 +88,9 @@ typedef struct {
     long bytes;
     int got_checksum;
     long checksum;
+    method_t method;
+    char* req_body;
+    int req_body_len;
     } url;
 static url* urls;
 static int num_urls, max_urls;
@@ -532,13 +536,22 @@ read_url_file( char* url_file )
     {
     FILE* fp;
     char line[5000], hostname[5000];
+
+    char* get = "GET ";
+    int get_len = strlen( get );
+    char* post = "POST ";
+    int post_len = strlen( post );
+
+    char* body_start = "BODY_START";
+    char* body_end = "BODY_END";
+
     char* http = "http://";
     int http_len = strlen( http );
 #ifdef USE_SSL
     char* https = "https://";
     int https_len = strlen( https );
 #endif
-    int proto_len, host_len;
+    int proto_len, host_len, method_len, is_body;
     char* cp;
 
     fp = fopen( url_file, "r" );
@@ -557,6 +570,26 @@ read_url_file( char* url_file )
 	if ( line[strlen( line ) - 1] == '\n' )
 	    line[strlen( line ) - 1] = '\0';
 
+    if ((is_body == 0) && (strncasecmp(body_start, line, strlen(body_start)) == 0 ) && ( num_urls > 0 ))
+    {
+        is_body = 1;
+        continue;
+    }
+    else if ((is_body == 1) && (strncasecmp(body_end, line, strlen(body_end)) == 0 ) && ( num_urls > 0 ))
+    {
+        is_body = 0;
+        continue;
+    }
+    else if (is_body == 1)
+    {
+        urls[num_urls].req_body = (char*) realloc_check( (void*) urls[num_urls].req_body, urls[num_urls].req_body_len + strlen(line));
+        memcpy(urls[num_urls].req_body + urls[num_urls].req_body_len, line, strlen(line));
+        urls[num_urls].req_body_len += strlen(line);
+        continue;
+    }
+
+    is_body = 0;
+
 	/* Check for room in urls. */
 	if ( num_urls >= max_urls )
 	    {
@@ -566,15 +599,32 @@ read_url_file( char* url_file )
 
 	/* Add to table. */
 	urls[num_urls].url_str = strdup_check( line );
+    urls[num_urls].req_body = NULL;
+    urls[num_urls].req_body_len = 0;
 
 	/* Parse it. */
-	if ( strncmp( http, line, http_len ) == 0 )
+    if ( strncasecmp(get, line, get_len) == 0 )
+    {
+        method_len = get_len;
+        urls[num_urls].method = METHOD_GET;
+    }
+    else if ( strncasecmp(post, line, post_len) == 0 )
+    {
+        method_len = post_len;
+        urls[num_urls].method = METHOD_POST;
+    }
+    else {
+        (void) fprintf( stderr, "%s: unknown method name - %s\n", argv0, line );
+        exit( 1 );
+    }
+
+	if ( strncmp( http, line + method_len, http_len ) == 0 )
 	    {
 	    proto_len = http_len;
 	    urls[num_urls].protocol = PROTO_HTTP;
 	    }
 #ifdef USE_SSL
-	else if ( strncmp( https, line, https_len ) == 0 )
+	else if ( strncmp( https, line + post_len, https_len ) == 0 )
 	    {
 	    proto_len = https_len;
 	    urls[num_urls].protocol = PROTO_HTTPS;
@@ -585,12 +635,12 @@ read_url_file( char* url_file )
 	    (void) fprintf( stderr, "%s: unknown protocol - %s\n", argv0, line );
 	    exit( 1 );
 	    }
-	for ( cp = line + proto_len;
+	for ( cp = line + proto_len + method_len;
 	     *cp != '\0' && *cp != ':' && *cp != '/'; ++cp )
 	    ;
 	host_len = cp - line;
-	host_len -= proto_len;
-	strncpy( hostname, line + proto_len, host_len );
+	host_len -= (proto_len + method_len);
+	strncpy( hostname, line + proto_len + method_len, host_len );
 	hostname[host_len] = '\0';
 	urls[num_urls].hostname = strdup_check( hostname );
 	if ( *cp == ':' )
@@ -1009,20 +1059,23 @@ handle_connect( int cnum, struct timeval* nowP, int double_check )
 	{
 #ifdef USE_SSL
 	bytes = snprintf(
-	    buf, sizeof(buf), "GET %s://%.500s:%d%.500s HTTP/1.0\r\n",
+	    buf, sizeof(buf), "%s %s://%.500s:%d%.500s HTTP/1.0\r\n",
+        urls[url_num].method == METHOD_GET ? "GET":"POST",
 	    urls[url_num].protocol == PROTO_HTTPS ? "https" : "http",
 	    urls[url_num].hostname, (int) urls[url_num].port,
 	    urls[url_num].filename );
 #else
 	bytes = snprintf(
-	    buf, sizeof(buf), "GET http://%.500s:%d%.500s HTTP/1.0\r\n",
+	    buf, sizeof(buf), "%s http://%.500s:%d%.500s HTTP/1.0\r\n",
+        urls[url_num].method == METHOD_GET ? "GET":"POST",
 	    urls[url_num].hostname, (int) urls[url_num].port,
 	    urls[url_num].filename );
 #endif
 	}
     else
 	bytes = snprintf(
-	    buf, sizeof(buf), "GET %.500s HTTP/1.0\r\n",
+	    buf, sizeof(buf), "%s %.500s HTTP/1.0\r\n",
+        urls[url_num].method == METHOD_GET ? "GET":"POST",
 	    urls[url_num].filename );
     bytes += snprintf(
 	&buf[bytes], sizeof(buf) - bytes, "Host: %s\r\n",
@@ -1030,6 +1083,15 @@ handle_connect( int cnum, struct timeval* nowP, int double_check )
     bytes += snprintf(
 	&buf[bytes], sizeof(buf) - bytes, "User-Agent: %s\r\n", HTTP_LOAD_VERSION );
     bytes += snprintf( &buf[bytes], sizeof(buf) - bytes, "\r\n" );
+
+    if (urls[url_num].req_body_len > 0) {
+        bytes += snprintf(
+	    &buf[bytes], sizeof(buf) - bytes, "Content-length: %d\r\n", urls[url_num].req_body_len );
+
+        bytes += snprintf(
+	    &buf[bytes], sizeof(buf) - bytes, "\n%s\r\n", urls[url_num].req_body );
+    }
+
 
     /* Send the request. */
     connections[cnum].request_at = *nowP;

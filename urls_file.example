@@ -1,0 +1,12 @@
+GET http://192.168.0.1/index.html
+POST http://192.168.0.1/endpount/
+BODY_START
+{
+"data":
+    {
+        "key1": "value1,
+    },
+    "key2": 0
+}
+BODY_END
+GET http://192.168.0.1/index3.html
