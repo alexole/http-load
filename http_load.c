@@ -551,7 +551,7 @@ read_url_file( char* url_file )
     char* https = "https://";
     int https_len = strlen( https );
 #endif
-    int proto_len, host_len, method_len, is_body;
+    int proto_len, host_len, method_len, is_body = 0;
     char* cp;
 
     fp = fopen( url_file, "r" );
@@ -582,9 +582,10 @@ read_url_file( char* url_file )
     }
     else if (is_body == 1)
     {
-        urls[num_urls].req_body = (char*) realloc_check( (void*) urls[num_urls].req_body, urls[num_urls].req_body_len + strlen(line));
-        memcpy(urls[num_urls].req_body + urls[num_urls].req_body_len, line, strlen(line));
-        urls[num_urls].req_body_len += strlen(line);
+        int idx = num_urls - 1;
+        urls[idx].req_body = (char*) realloc_check( (void*) urls[idx].req_body, urls[idx].req_body_len + strlen(line));
+        memcpy(urls[idx].req_body + urls[idx].req_body_len, line, strlen(line));
+        urls[idx].req_body_len += strlen(line);
         continue;
     }
 
@@ -1082,16 +1083,16 @@ handle_connect( int cnum, struct timeval* nowP, int double_check )
 	urls[url_num].hostname );
     bytes += snprintf(
 	&buf[bytes], sizeof(buf) - bytes, "User-Agent: %s\r\n", HTTP_LOAD_VERSION );
-    bytes += snprintf( &buf[bytes], sizeof(buf) - bytes, "\r\n" );
 
     if (urls[url_num].req_body_len > 0) {
         bytes += snprintf(
 	    &buf[bytes], sizeof(buf) - bytes, "Content-length: %d\r\n", urls[url_num].req_body_len );
 
         bytes += snprintf(
-	    &buf[bytes], sizeof(buf) - bytes, "\n%s\r\n", urls[url_num].req_body );
+	    &buf[bytes], sizeof(buf) - bytes, "\r\n%.*s", urls[url_num].req_body_len, urls[url_num].req_body );
     }
 
+    bytes += snprintf( &buf[bytes], sizeof(buf) - bytes, "\r\n" );
 
     /* Send the request. */
     connections[cnum].request_at = *nowP;
